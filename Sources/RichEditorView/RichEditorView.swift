@@ -34,6 +34,9 @@ import WebKit
     /// Called when custom actions are called by callbacks in the JS
     /// By default, this method is not used unless called by some custom JS that you add
     @objc optional func richEditor(_ editor: RichEditorView, handle action: String)
+    
+    // Called when image pasted
+    @objc optional func richEditor(_ editor: RichEditorView, image: UIImage)
 }
 
 /// The value we hold in order to be able to set the line height before the JS completely loads.
@@ -147,8 +150,12 @@ public class RichEditorWebView: WKWebView {
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         webView.configuration.dataDetectorTypes = WKDataDetectorTypes()
         
+        webView.configuration.userContentController.add(self, name: "imageHandler")
         webView.scrollView.isScrollEnabled = isScrollEnabled
         webView.scrollView.showsHorizontalScrollIndicator = false
+        if #available(iOS 16.4, *) {
+            webView.isInspectable = true
+        }
         webView.scrollView.bounces = false
         webView.scrollView.delegate = self
         webView.scrollView.clipsToBounds = false
@@ -352,26 +359,12 @@ public class RichEditorWebView: WKWebView {
     // Offline mode determines how to handle insertImage
     var offline = true
     
-    public func insertImage(_ url: String, alt: String) {
+    public func insertImage(_ url: String, alt: String, cid: String, maxWidth: Int? = nil, maxHeight: Int? = nil) {
         runJS("RE.prepareInsert()")
-        runJS("RE.insertImage('\(url.escaped)', '\(alt.escaped)')")
+        let maxWidthUnwrapped = (maxWidth == nil) ? "null" : String(describing: maxWidth ?? 0)
+        let maxHeightUnwrapped = (maxHeight == nil) ? "null" : String(describing: maxHeight ?? 0)
+        runJS("RE.insertImage('\(url.escaped)', '\(alt.escaped)', '\(cid.escaped)', '\(maxWidthUnwrapped)', '\(maxHeightUnwrapped)')")
     }
-
-    public func insertVideo(vidURL: String, posterURL: String="", isBase64: Bool=false) {
-            // Remember, both poster and src can be base64 encoded
-            runJS("RE.prepareInsert()")
-            var theJS: String
-            if offline == true {
-                // Assuming vidURL already in base64
-                theJS = "<div><video class='video-js' controls preload='auto'  data-setup='{}'><source src='\(vidURL)'></source></video></div>"
-            } else {
-                // Upload to server the base64 if isBase64 == true. Utilize the IDs and Video tags to your advantage. On Python web server, I use BeautifulSoup4. Use the base64 to save video in S3 and replace src with your new S3 video. Or you could just save in database.
-                let uuid = UUID().uuidString
-                theJS = "<div><video \(isBase64 ? "id='"+uuid+"'":"") class='video-js' controls preload='auto' data-setup='{}'><source src='\(vidURL)\(isBase64 ? "":"#t=0.01")'></source></video></div>"
-                // The time at the end is so that we can grab a thumbnail IF it's a link
-            }
-            runJS("RE.insertHTML('\(theJS.escaped)')")
-        }
     
     public func insertLink(href: String, text: String, title: String = "") {
         runJS("RE.prepareInsert()")
@@ -401,19 +394,11 @@ public class RichEditorWebView: WKWebView {
     }
     
     /// Checks if cursor is in a table element. If so, return true so that you can add menu items accordingly.
-    public func isCursorInTable(handler: @escaping (Bool) -> Void) {
-        runJS("RE.isCursorInTable") { r in
-            handler(r == "true")
-        }
-    }
-
-    public func addRowToTable() {
-        runJS("RE.addRowToTable()")
-    }
-
-    public func deleteColumnFromTable() {
-        runJS("RE.addRowToTable()")
-    }
+//    public func isCursorInTable(handler: @escaping (Bool) -> Void) {
+//        runJS("RE.isCursorInTable") { r in
+//            handler(r == "true")
+//        }
+//    }
 
     /// Runs some JavaScript on the WKWebView and returns the result
     /// If there is no result, returns an empty string
@@ -457,7 +442,25 @@ public class RichEditorWebView: WKWebView {
     
     // MARK: WKWebViewDelegate
     
-    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {}
+    public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let jsCode = """
+               document.addEventListener('paste', function(event) {
+                   var items = (event.clipboardData || event.originalEvent.clipboardData).items;
+                   for (var i = 0; i < items.length; i++) {
+                       if (items[i].type.indexOf('image') !== -1) {
+                           var blob = items[i].getAsFile();
+                           var reader = new FileReader();
+                           event.preventDefault();
+                           reader.onload = function(e) {
+                               window.webkit.messageHandlers.imageHandler.postMessage(e.target.result.split(',')[1]);
+                           };
+                           reader.readAsDataURL(blob);
+                       }
+                   }
+               });
+               """
+        webView.evaluateJavaScript(jsCode, completionHandler: nil)
+    }
     
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         // Handle pre-defined editor actions
@@ -644,4 +647,19 @@ public class RichEditorWebView: WKWebView {
         blur()
         return true
     }
+}
+
+// MARK: - WKScriptMessageHandler
+
+extension RichEditorView: WKScriptMessageHandler {
+    
+    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        debugPrint("message.name: \(message.name)")
+        if message.name == "imageHandler", let base64String = message.body as? String,
+           let imageData = Data(base64Encoded: base64String, options: .ignoreUnknownCharacters),
+           let image = UIImage(data: imageData) {
+            delegate?.richEditor?(self, image: image)
+        }
+    }
+    
 }

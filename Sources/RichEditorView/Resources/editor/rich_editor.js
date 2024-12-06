@@ -326,7 +326,7 @@ RE.prepareInsert = function() {
 
 RE.backuprange = function() {
     var selection = window.getSelection();
-    if (selection.rangeCount > 0) {
+    if (selection && selection.rangeCount > 0) {
         var range = selection.getRangeAt(0);
         RE.currentSelection = {
             "startContainer": range.startContainer,
@@ -334,6 +334,9 @@ RE.backuprange = function() {
             "endContainer": range.endContainer,
             "endOffset": range.endOffset
         };
+    } else {
+        console.log("No selection or range available.");
+        RE.currentSelection = null;
     }
 };
 

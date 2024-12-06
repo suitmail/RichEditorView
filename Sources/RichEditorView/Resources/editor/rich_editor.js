@@ -357,12 +357,32 @@ RE.selectElementContents = function(el) {
 };
 
 RE.restorerange = function() {
-    var selection = window.getSelection();
-    selection.removeAllRanges();
-    var range = document.createRange();
-    range.setStart(RE.currentSelection.startContainer, RE.currentSelection.startOffset);
-    range.setEnd(RE.currentSelection.endContainer, RE.currentSelection.endOffset);
-    selection.addRange(range);
+    var currentSelection = RE.currentSelection;
+
+    var startContainer = currentSelection ? currentSelection.startContainer : null;
+    var startOffset = currentSelection ? currentSelection.startOffset : null;
+    var endContainer = currentSelection ? currentSelection.endContainer : null;
+    var endOffset = currentSelection ? currentSelection.endOffset : null;
+
+    if (
+        startContainer &&
+        endContainer &&
+        typeof startOffset === "number" &&
+        typeof endOffset === "number"
+    ) {
+        var selection = window.getSelection();
+        if (selection) {
+            selection.removeAllRanges();
+            var range = document.createRange();
+            range.setStart(startContainer, startOffset);
+            range.setEnd(endContainer, endOffset);
+            selection.addRange(range);
+        } else {
+            console.log("Selection is not available.");
+        }
+    } else {
+        console.log("Invalid or missing selection properties.");
+    }
 };
 
 RE.focus = function() {
